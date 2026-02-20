@@ -14,9 +14,11 @@ const MeasurementPanel = ({ annotations, referenceData }) => {
     }
 
     // 2. Helper to project a single point (same logic as ExtractionPanel)
+    // 2. Helper to project a single point (same logic as ExtractionPanel)
+    const REF_SIZE_FT = 6.5 / 12.0;
+
     const project = (x, y) => {
         const m = inverseMatrix;
-        const REF_SIZE_FT = 6.5 / 12; // 0.54166...
         const Z = m[6] * x + m[7] * y + m[8];
         if (Math.abs(Z) < 0.0001) return { x: 0, y: 0 };
         return {
