@@ -23,7 +23,8 @@ export const detectFourSquares = (imageElement) => {
       
       const binary = new cv.Mat();
       // Use adaptive thresholding for better robustness against lighting
-      cv.adaptiveThreshold(gray, binary, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 11, 2);
+      // THRESH_BINARY_INV makes black squares white, so findContours traces their inner edge tightly
+      cv.adaptiveThreshold(gray, binary, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 11, 2);
       
       const contours = new cv.MatVector();
       const hierarchy = new cv.Mat();
@@ -45,6 +46,7 @@ export const detectFourSquares = (imageElement) => {
                 
                 // Filter out the image border itself
                 if (rect.width > src.cols * 0.95 || rect.height > src.rows * 0.95) {
+                    approx.delete();
                     continue;
                 }
 
@@ -52,14 +54,38 @@ export const detectFourSquares = (imageElement) => {
                 
                 // Check if it's roughly square (tolerance 0.5 - 2.0 to handle perspective)
                 if (aspectRatio >= 0.5 && aspectRatio <= 2.0) {
-                    // Store the contour points
                     let points = [];
-                    for(let j=0; j<4; j++) {
-                        points.push({
-                            x: approx.data32S[j*2],
-                            y: approx.data32S[j*2+1]
-                        });
+                    
+                    try {
+                        // Mathmatically snap corners to sub-pixel accuracy based on the image gradients
+                        const cornersMat = cv.matFromArray(4, 1, cv.CV_32FC2, [
+                            approx.data32S[0], approx.data32S[1],
+                            approx.data32S[2], approx.data32S[3],
+                            approx.data32S[4], approx.data32S[5],
+                            approx.data32S[6], approx.data32S[7]
+                        ]);
+                        const winSize = new cv.Size(5, 5);
+                        const zeroZone = new cv.Size(-1, -1);
+                        const criteria = new cv.TermCriteria(cv.TERM_CRITERIA_EPS + cv.TERM_CRITERIA_MAX_ITER, 40, 0.001);
+                        cv.cornerSubPix(gray, cornersMat, winSize, zeroZone, criteria);
+                        
+                        for(let j=0; j<4; j++) {
+                            points.push({
+                                x: cornersMat.data32F[j*2],
+                                y: cornersMat.data32F[j*2+1]
+                            });
+                        }
+                        cornersMat.delete();
+                    } catch (e) {
+                         // Fallback to integer perimeter points
+                         for(let j=0; j<4; j++) {
+                            points.push({
+                                x: approx.data32S[j*2],
+                                y: approx.data32S[j*2+1]
+                            });
+                        }
                     }
+                    
                     possibleSquares.push({ area, points, contour: cnt }); 
                 } else {
                     console.log(`Rejected candidate due to aspect ratio: ${aspectRatio.toFixed(2)}`);
@@ -167,19 +193,21 @@ export const detectFourSquares = (imageElement) => {
                const [tlSq, trSq, brSq, blSq] = sortedSquares;
                
                // 3. Find the "outermost" corner for each square
-               // TL Square: Point with smallest x+y (closest to 0,0)
-               // TR Square: Point with largest x-y (closest to Width, 0)
-               // BR Square: Point with largest x+y (closest to Width, Height)
-               // BL Square: Point with smallest x-y (closest to 0, Height)
-               
-               const getExtremePoint = (sq, compareFn) => {
-                   return sq.points.reduce((best, p) => !best || compareFn(p, best) ? p : best, null);
+               // The outermost corner of a square relative to the center of the entire pattern
+               // is the corner that is furthest from the pattern's overall centroid.
+               const getExtremePoint = (sq) => {
+                   return sq.points.reduce((best, p) => {
+                       if (!best) return p;
+                       const distToBest = Math.pow(best.x - centerX, 2) + Math.pow(best.y - centerY, 2);
+                       const distToP = Math.pow(p.x - centerX, 2) + Math.pow(p.y - centerY, 2);
+                       return distToP > distToBest ? p : best;
+                   }, null);
                };
                
-               const p1 = getExtremePoint(tlSq, (p, best) => (p.x + p.y) < (best.x + best.y));
-               const p2 = getExtremePoint(trSq, (p, best) => (p.x - p.y) > (best.x - best.y));
-               const p3 = getExtremePoint(brSq, (p, best) => (p.x + p.y) > (best.x + best.y));
-               const p4 = getExtremePoint(blSq, (p, best) => (p.x - p.y) < (best.x - best.y));
+               const p1 = getExtremePoint(tlSq);
+               const p2 = getExtremePoint(trSq);
+               const p3 = getExtremePoint(brSq);
+               const p4 = getExtremePoint(blSq);
                
                results.boundingBox = [p1, p2, p3, p4];
           } else {

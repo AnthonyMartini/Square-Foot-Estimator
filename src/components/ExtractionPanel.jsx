@@ -88,15 +88,15 @@ const ExtractionPanel = ({ extractions, onClear }) => {
                   <div className="physical-display" style={{ marginBottom: '10px', fontSize: '0.85em', background: '#f0f4ff', padding: '8px', borderRadius: '4px', border: '1px solid #d0d7ee' }}>
                       <h4>Physical Wall Mapping (Feet)</h4>
                       <p style={{ margin: '0 0 5px 0', fontSize: '0.8em', color: '#555' }}>
-                        Reference Square is 6.5x6.5 inches (0.54 ft). Coords relative to Top-Left.
+                        Reference Square (Outer markers bounding box) is assumed 6.5x6.5 inches (0.54 ft). Coords relative to Top-Left.
                       </p>
                       {(() => {
                           const m = ex.inverseMatrix;
                           const w = ex.sourceSize.width;
                           const h = ex.sourceSize.height;
                           
-                          // REF SIZE: 6.5 inches = 6.5/12 feet
-                          const REF_SIZE_FT = 6.5 / 12.0;
+                          // REF SIZE: Outer bounding box of all 4 markers assumed to be 6.5 inches
+                          const PATTERN_OUTER_SIZE_FT = 6.5 / 12.0;
 
                           // Project a point (x,y) from the image to physical feet relative to the Top-Left of the reference grid
                           const project = (x, y) => {
@@ -104,10 +104,10 @@ const ExtractionPanel = ({ extractions, onClear }) => {
                               if (Math.abs(Z) < 0.0001) return { x: 0, y: 0 };
                               
                               // The homography maps to a unit square [0,1].
-                              // To map to 6.5 inches, multiply by REF_SIZE_FT.
+                              // To map to 6.5 inches, multiply by PATTERN_OUTER_SIZE_FT.
                               return {
-                                  x: ((m[0]*x + m[1]*y + m[2]) / Z) * REF_SIZE_FT,
-                                  y: ((m[3]*x + m[4]*y + m[5]) / Z) * REF_SIZE_FT
+                                  x: ((m[0]*x + m[1]*y + m[2]) / Z) * PATTERN_OUTER_SIZE_FT,
+                                  y: ((m[3]*x + m[4]*y + m[5]) / Z) * PATTERN_OUTER_SIZE_FT
                               };
                           };
                           
@@ -175,7 +175,118 @@ const ExtractionPanel = ({ extractions, onClear }) => {
                       })()}
                   </div>
               )}
-              <img src={ex.dataURL} alt={`Reference`} />
+              <div style={{ position: 'relative', display: 'inline-block', maxWidth: '100%' }}>
+                  <img src={ex.dataURL} alt={`Reference`} style={{ display: 'block', maxWidth: '100%' }} />
+                  {ex.candidates && ex.points && (() => {
+                      const minX = Math.floor(Math.min(...ex.points.map(p => p.x)));
+                      const minY = Math.floor(Math.min(...ex.points.map(p => p.y)));
+                      const maxX = Math.ceil(Math.max(...ex.points.map(p => p.x)));
+                      const maxY = Math.ceil(Math.max(...ex.points.map(p => p.y)));
+                      const w = maxX - minX;
+                      const h = maxY - minY;
+                      
+                      const project = (x, y) => {
+                          if (!ex.inverseMatrix) return {x:0, y:0};
+                          const m = ex.inverseMatrix;
+                          const Z = m[6]*x + m[7]*y + m[8]; // w'
+                          if (Math.abs(Z) < 0.0001) return { x: 0, y: 0 };
+                          
+                          // The bounding box maps the OUTER corners of the four fiducials.
+                          // Setting back to 6.5 inches.
+                          const PATTERN_OUTER_SIZE_FT = 6.5 / 12.0; 
+                          return {
+                              x: ((m[0]*x + m[1]*y + m[2]) / Z) * PATTERN_OUTER_SIZE_FT,
+                              y: ((m[3]*x + m[4]*y + m[5]) / Z) * PATTERN_OUTER_SIZE_FT
+                          };
+                      };
+                      const distInFeet = (p1, p2) => {
+                          const proj1 = project(p1.x, p1.y);
+                          const proj2 = project(p2.x, p2.y);
+                          return Math.sqrt(Math.pow(proj2.x - proj1.x, 2) + Math.pow(proj2.y - proj1.y, 2));
+                      };
+
+                      let totalX = 0, totalY = 0, pointCount = 0;
+                      ex.candidates.forEach(cand => {
+                          cand.forEach(p => { totalX += p.x; totalY += p.y; pointCount++; });
+                      });
+                      const cx = totalX / pointCount;
+                      const cy = totalY / pointCount;
+
+                      const sortedCands = [null, null, null, null];
+                      ex.candidates.forEach(cand => {
+                          const candCx = cand.reduce((sum, p) => sum + p.x, 0) / 4;
+                          const candCy = cand.reduce((sum, p) => sum + p.y, 0) / 4;
+                          if (candCx < cx && candCy < cy) sortedCands[0] = cand; // TL
+                          else if (candCx >= cx && candCy < cy) sortedCands[1] = cand; // TR
+                          else if (candCx >= cx && candCy >= cy) sortedCands[2] = cand; // BR
+                          else if (candCx < cx && candCy >= cy) sortedCands[3] = cand; // BL
+                      });
+
+                      let insideDistances = null;
+                      if (sortedCands.every(c => c)) {
+                          const getInsideCorner = (cand) => {
+                              return cand.reduce((best, p) => {
+                                  if (!best) return p;
+                                  const distToBest = Math.pow(best.x - cx, 2) + Math.pow(best.y - cy, 2);
+                                  const distToP = Math.pow(p.x - cx, 2) + Math.pow(p.y - cy, 2);
+                                  return distToP < distToBest ? p : best;
+                              }, null);
+                          };
+                          
+                          const pTL = getInsideCorner(sortedCands[0]);
+                          const pTR = getInsideCorner(sortedCands[1]);
+                          const pBR = getInsideCorner(sortedCands[2]);
+                          const pBL = getInsideCorner(sortedCands[3]);
+                          
+                          insideDistances = [
+                              { p1: pTL, p2: pTR, dist: distInFeet(pTL, pTR) }, // Top
+                              { p1: pTR, p2: pBR, dist: distInFeet(pTR, pBR) }, // Right
+                              { p1: pBR, p2: pBL, dist: distInFeet(pBR, pBL) }, // Bottom
+                              { p1: pBL, p2: pTL, dist: distInFeet(pBL, pTL) }  // Left
+                          ];
+                      }
+                      
+                      return (
+                          <svg 
+                              style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none' }}
+                              viewBox={`0 0 ${w} ${h}`}
+                              preserveAspectRatio="none"
+                          >
+                              {ex.candidates.map((cand, i) => (
+                                  <polygon 
+                                      key={`cand-${i}`}
+                                      points={cand.map(p => `${p.x - minX},${p.y - minY}`).join(' ')}
+                                      fill="rgba(255, 0, 0, 0.3)"
+                                      stroke="none"
+                                  />
+                              ))}
+                              {insideDistances && insideDistances.map((line, i) => (
+                                  <g key={`dist-${i}`}>
+                                      <line 
+                                          x1={line.p1.x - minX} y1={line.p1.y - minY} 
+                                          x2={line.p2.x - minX} y2={line.p2.y - minY} 
+                                          stroke="#3182ce" 
+                                          strokeWidth="2" 
+                                          strokeDasharray="4"
+                                      />
+                                      <text 
+                                          x={(line.p1.x + line.p2.x)/2 - minX} 
+                                          y={(line.p1.y + line.p2.y)/2 - minY} 
+                                          fill="#2b6cb0" 
+                                          fontSize="16" 
+                                          fontWeight="bold"
+                                          textAnchor="middle" 
+                                          dominantBaseline="middle"
+                                          style={{ textShadow: '2px 2px 4px white, -2px -2px 4px white, 2px -2px 4px white, -2px 2px 4px white' }}
+                                      >
+                                          {line.dist.toFixed(2)} ft
+                                      </text>
+                                  </g>
+                              ))}
+                          </svg>
+                      );
+                  })()}
+              </div>
             </div>
           ))
         )}

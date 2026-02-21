@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import ImageUpload from './components/ImageUpload'
 import AnnotationOverlay from './components/AnnotationOverlay'
 import Toolbar from './components/Toolbar'
@@ -7,7 +7,7 @@ import './App.css'
 import { detectFourSquares, extractImageRegion } from './utils/cvHelper'
 import ExtractionPanel from './components/ExtractionPanel'
 import MeasurementPanel from './components/MeasurementPanel'
-import { useEffect } from 'react'
+import TutorialModal from './components/TutorialModal'
 
 function App() {
   const [imageSrc, setImageSrc] = useState(null)
@@ -15,7 +15,9 @@ function App() {
   const [annotations, setAnnotations] = useState([])
   const [isDetecting, setIsDetecting] = useState(false);
   const [extractions, setExtractions] = useState([]);
+  const [showTutorial, setShowTutorial] = useState(false);
 
+  // ... (keeping the rest of the file the same until the return) ...
   const handleImageUpload = (src) => {
     setImageSrc(src)
     setAnnotations([]) // Clear annotations on new image
@@ -54,6 +56,7 @@ function App() {
                         matrix: matrix,
                         inverseMatrix: inverseMatrix,
                         points: ann.points, // Pass points for geometry calculation
+                        candidates: ann.candidates, // Pass candidates for rendering
                         sourceSize: { width: imgElement.naturalWidth, height: imgElement.naturalHeight }
                     });
                     console.log("Extraction: Added Reference Square", newExtractions);
@@ -116,7 +119,8 @@ function App() {
                       id: Date.now(),
                       type: 'polygon',
                       points: result.boundingBox,
-                      color: 'red' // Reference Square color
+                      color: 'red', // Reference Square color
+                      candidates: result.candidates // Save candidates for reference pane
                   }];
               });
           } else {
@@ -140,17 +144,31 @@ function App() {
 
   return (
     <div className="app-container">
-      <h1>Image Annotation Tool</h1>
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '10px', width: '100%', marginBottom: '20px' }}>
+          <h1 style={{ margin: 0 }}>Square Footage Tool</h1>
+          <button 
+              className="how-to-button" 
+              onClick={() => setShowTutorial(true)}
+              style={{ padding: '8px 16px', background: '#3b82f6', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}
+          >
+              How to Use
+          </button>
+      </div>
+      
+      {showTutorial && <TutorialModal onClose={() => setShowTutorial(false)} />}
       
       {!imageSrc && <ImageUpload onImageUpload={handleImageUpload} />}
 
       {imageSrc && (
+        
         <div className="workspace">
+          <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: '10px', marginBottom: '20px'}}>
           <Toolbar 
             activeTool={activeTool} 
             onToolChange={handleToolChange} 
             onAutoDetect={handleAutoDetect} 
           />
+          </div>
           {isDetecting && <p>Detecting...</p>}
           
           <div className="main-layout">
@@ -166,7 +184,9 @@ function App() {
                         onFinishDrawing={() => setActiveTool(null)}
                      />
                   </div>
-                  <button className="reset-button" onClick={() => setImageSrc(null)}>Upload New Image</button>
+                  <button className="reset-button" onClick={() => setImageSrc(null)} style={{ marginTop: '15px', padding: '10px 20px', background: '#3b82f6', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}>
+                    Upload New Image
+                  </button>
               </div>
               
               <div className="panels-column">

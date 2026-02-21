@@ -15,15 +15,17 @@ const MeasurementPanel = ({ annotations, referenceData }) => {
 
     // 2. Helper to project a single point (same logic as ExtractionPanel)
     // 2. Helper to project a single point (same logic as ExtractionPanel)
-    const REF_SIZE_FT = 6.5 / 12.0;
+    // The reference grid maps the OUTER edges of the 4 markers.
+    // If we assume a 6.5-inch outer fiducial pattern width, that is 6.5/12.0 feet.
+    const PATTERN_OUTER_SIZE_FT = 6.5 / 12.0;
 
     const project = (x, y) => {
         const m = inverseMatrix;
         const Z = m[6] * x + m[7] * y + m[8];
         if (Math.abs(Z) < 0.0001) return { x: 0, y: 0 };
         return {
-            x: ((m[0] * x + m[1] * y + m[2]) / Z) * REF_SIZE_FT,
-            y: ((m[3] * x + m[4] * y + m[5]) / Z) * REF_SIZE_FT
+            x: ((m[0] * x + m[1] * y + m[2]) / Z) * PATTERN_OUTER_SIZE_FT,
+            y: ((m[3] * x + m[4] * y + m[5]) / Z) * PATTERN_OUTER_SIZE_FT
         };
     };
 
